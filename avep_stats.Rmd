@@ -1,0 +1,63 @@
+---
+output: pdf_document
+geometry: "left=1cm,right=1cm,top=2cm,bottom=2cm"
+fontsize: 9pt
+---
+```{r include=FALSE, message=FALSE, warning=FALSE}
+library("ez", quietly = TRUE)
+library(lme4, quietly = TRUE)
+library(xtable, quietly = TRUE)
+library(stargazer, quietly = TRUE)
+library(kableExtra, quietly = TRUE)
+library(papeR, quietly = TRUE)
+library(knitr, quietly = TRUE)
+library(ggplot2, quietly = TRUE)
+library(multcomp, quietly = TRUE)
+library(sjPlot, quietly = TRUE)
+require(lmerTest) # forces lmer to return p-values
+options(width = 1800) 
+```
+# AVEP ANALYSIS RESULTS
+```{r, echo=TRUE, warning=FALSE, message=FALSE, fig.width=6, fig.height=3}
+top_folder = '/Users/kohler/Dropbox/WRITING/Articles/2018_AVEP/data_for_r'
+cond_names <- c("vis_sweep", "aud_sweep", "vis_sweep+aud", "aud_sweep+vis")
+counter = 0
+for (q in c(1,2,3,4)) {
+  cur_file = switch(q, "r_vis_rc1_1F1", "r_vis_rc1_2F1", "r_aud_rc1_1F2", "r_aud_rc1_2F2") 
+  for (c in c(1,2,3,4)) {
+    cur_csv <- sprintf('%s/%s_%d.csv', top_folder, cur_file, c)
+    cur_data <-data.frame( read.csv(file = cur_csv ) )
+    cur_data$group_lbl <- factor(cur_data$group_lbl, levels=c("typ","asd","adhd"))
+    cur_data$group_lbl2 <- factor(cur_data$group_lbl, levels=c("asd","typ","adhd"))
+    cur_data$sc_bin <- scale(log(cur_data$bin,2))
+    
+    if (q == 1) {
+      cur_data$condition=factor(c)
+      if (c == 1) {
+        vis_frame <- cur_data
+      } else {
+        vis_frame <- rbind(vis_frame, cur_data) 
+      }
+    }
+    g <- ggplot(data = cur_data, aes(x=sc_bin, y=data, color=group_lbl2), ylim(0,15)) + 
+      geom_smooth(method="lm") + theme_bw()
+    g <- g + theme(
+      legend.title=element_blank(), 
+      legend.justification=c(1,0), 
+      legend.background = element_blank()) + 
+      ggtitle(toupper(sprintf('%s, %s\n',cur_file, cond_names[c])))
+    print(g)
+    m1 <- lmer(data ~ group_lbl * sc_bin + (1|subject), cur_data)
+    m1_alt <- lmer(data ~ group_lbl2 * sc_bin + (1|subject), cur_data)
+    m2 <- lmer(data ~ group_lbl + sc_bin + (1|subject), cur_data)
+    cat("ANOVA TEST FOR MAIN EFFECTS AND INTERACTIONS\n")
+    print(anova(m1), type='pdf')
+    cat("\nSUMMARY AND POST-HOC TESTS, TYP VS ASD & TYP VS ADHD\n")
+    print(prettify(summary(m1)), type='pdf')
+    cat("\nSUMMARY AND POST-HOC TESTS, ASD VS TYP & ASD VS ADHD\n")
+    print(prettify(summary(m1_alt)), type='pdf')
+    cat("\nTEST OF WHETHER OR NOT THE INTERACTION PROVIDES A BETTER FIT\n")
+    print(anova(m1, m2))
+  }
+}
+```
