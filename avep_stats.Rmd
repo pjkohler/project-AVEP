@@ -14,6 +14,7 @@ library(knitr, quietly = TRUE)
 library(ggplot2, quietly = TRUE)
 library(multcomp, quietly = TRUE)
 library(sjPlot, quietly = TRUE)
+library(emmeans, quietly = TRUE)
 require(lmerTest) # forces lmer to return p-values
 options(width = 1800) 
 ```
@@ -30,7 +31,10 @@ for (q in c(1,2,3,4)) {
     cur_data$group_lbl <- factor(cur_data$group_lbl, levels=c("typ","asd","adhd"))
     cur_data$group_lbl2 <- factor(cur_data$group_lbl, levels=c("asd","typ","adhd"))
     cur_data$sc_bin <- scale(log(cur_data$bin,2))
-    
+    title_str <- toupper(sprintf('%s, %s\n',cur_file, cond_names[c]))
+    title_str <- gsub("R_VIS_RC", "VISUAL RC", title_str)
+    title_str <- gsub("R_AUD_RC", "AUDITORY RC", title_str)
+    title_str <- gsub("_1", ", 1", title_str); title_str <- gsub("_2", ", 2", title_str)
     if (q == 1) {
       cur_data$condition=factor(c)
       if (c == 1) {
@@ -45,17 +49,27 @@ for (q in c(1,2,3,4)) {
       legend.title=element_blank(), 
       legend.justification=c(1,0), 
       legend.background = element_blank()) + 
-      ggtitle(toupper(sprintf('%s, %s\n',cur_file, cond_names[c])))
+      ggtitle(title_str)
     print(g)
     m1 <- lmer(data ~ group_lbl * sc_bin + (1|subject), cur_data)
     m1_alt <- lmer(data ~ group_lbl2 * sc_bin + (1|subject), cur_data)
     m2 <- lmer(data ~ group_lbl + sc_bin + (1|subject), cur_data)
-    cat("ANOVA TEST FOR MAIN EFFECTS AND INTERACTIONS\n")
+    emm = emmeans(m1, ~ group_lbl * sc_bin, lmer.df = "satterthwaite")
+    if (isSingular(m1)) {
+      if (isSingular(m2)) {
+        cat("WARNING: BOTH MODELS ARE SINGULAR!\n\n")
+      } else {
+        cat("WARNING: MODEL1 IS SINGULAR, BUT MODEL2 IS NOT!\n\n")
+      }
+    } else {
+      cat("LOVELY: NONE OF THE MODELS ARE SINGULAR!\n\n")
+    }
+    cat("ANOVA TEST FOR MAIN EFFECTS AND INTERACTIONS\n\n")
     print(anova(m1), type='pdf')
     cat("\nSUMMARY AND POST-HOC TESTS, TYP VS ASD & TYP VS ADHD\n")
     print(prettify(summary(m1)), type='pdf')
-    cat("\nSUMMARY AND POST-HOC TESTS, ASD VS TYP & ASD VS ADHD\n")
-    print(prettify(summary(m1_alt)), type='pdf')
+    cat("\nESTIMATED MARGINAL MEANS, SIMPLE MAIN EFFECTS OF GROUP WITHOUT CORRECTION\n")
+    print(prettify(summary(pairs(emm, simple = "group_lbl", adjust = "none"))))
     cat("\nTEST OF WHETHER OR NOT THE INTERACTION PROVIDES A BETTER FIT\n")
     print(anova(m1, m2))
   }
