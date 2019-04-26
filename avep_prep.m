@@ -12,8 +12,7 @@ setenv('DYLD_LIBRARY_PATH','')
 close all;
 clear all;
 
-printFigures=true; % set to true if you want to automatically print the figures and save them into the high-level directory where the data are
-run_rca = true;
+run_rca = false;
 trial_error = false;
 plot_medians = false;
 plot_binmean = false;
@@ -31,6 +30,7 @@ doNR = false(4,6,5);  % 10 freqs, 5 RCs, 5 conditions
 
 %% GET SUBJECT FOLDERS
 top_path = '/Volumes/Denali_DATA1/kohler/EEG_EXP/DATA/AVEP';
+fig_path = '/Users/kohler/Dropbox/WRITING/Articles/2018_AVEP/figures';
 subject_group{1} = sprintf('%s/AVEP_ASD',top_path); % ASD young subjects
 subject_group{2} = sprintf('%s/AVEP_TYP',top_path); % Typical young subjects
 subject_group{3} = sprintf('%s/AVEP_ADHD',top_path);% ADHD young participants
@@ -64,7 +64,7 @@ adhd_idx = cell2mat(cellfun(@(x) ~isempty(strfind(upper(x),'ADHD')),ready_names,
 cond_names = {'vis sweep','aud sweep','vis sweep + aud','aud sweep + vis'};
 all_freqs = [1,2,5,6];
 all_conds = [1,2,3,4];
-mat_path = sprintf('%s/analysis/rca_avep.mat',top_path);
+mat_path = sprintf('%s/rca_avep.mat',fig_path);
 errorType = 'SEM';
 keepConditions = true;
 
@@ -114,6 +114,13 @@ for g = 1:length(subject_group)
     freq_labels = sub_freq_labels{1}{1};
     vis_labels = cellfun(@(x) num2str(str2num(x),'%0.2f'), sub_bin_labels{1}{1},'uni',false);
     aud_labels = cellfun(@(x) num2str(str2num(x),'%0.4f'), sub_bin_labels{1}{2},'uni',false);
+    
+    % convert auditory to dB values
+    aud_x = cell2mat(cellfun(@(x) reallog(str2num(x)), aud_labels, 'uni',false));
+    aud_x = interp1([min(aud_x),max(aud_x)],[30,70],[aud_x; reallog(0.1)]);
+    constant_dB = aud_x(end);
+    aud_x = aud_x(1:end-1);
+    
     % GENERATE NEW RCA STRUCT WITH ALL GROUP-LEVEL DATA
     for q = 1:2
         for f = 1:length(all_freqs)
@@ -151,38 +158,10 @@ for g = 1:length(subject_group)
             projected(g,q).rca(f).comparisonNoiseData.lowerSideBand = cellfun(@(x) x(f_idx,:,:),temp_comparison_noise.lowerSideBand,'uni',false);
             projected(g,q).rca(f).comparisonNoiseData.higherSideBand = cellfun(@(x) x(f_idx,:,:),temp_comparison_noise.higherSideBand,'uni',false);
             projected(g,q).rca(f).settings = orderfields(projected(g,q).rca(f).settings);
-            temp_struct = aggregateData(projected(g,q).rca(f),keepConditions,errorType,trial_error,doNR);        
-            % RC
-            projected(g,q).rca(f).stats.Amp = squeeze(temp_struct.ampBins);
-            projected(g,q).rca(f).stats.SubjectAmp = squeeze(temp_struct.subjectAmp);
-            projected(g,q).rca(f).stats.SubjectAmpProjected = squeeze(temp_struct.subjectAmp_projected);
-            projected(g,q).rca(f).stats.ErrLB = squeeze(temp_struct.ampErrBins(:,:,:,:,1));
-            projected(g,q).rca(f).stats.ErrUB = squeeze(temp_struct.ampErrBins(:,:,:,:,2));
-            projected(g,q).rca(f).stats.NoiseAmp = squeeze(temp_struct.ampNoiseBins);
-            projected(g,q).rca(f).stats.SubjectNoiseAmp = squeeze(temp_struct.subjectAmpNoise);
-            % Naka-Rushton
-            projected(g,q).rca(f).stats.NR_Params = squeeze(temp_struct.NakaRushton.Params);
-            projected(g,q).rca(f).stats.NR_R2 = squeeze(temp_struct.NakaRushton.R2);
-            projected(g,q).rca(f).stats.NR_JKSE = squeeze(temp_struct.NakaRushton.JackKnife.SE);
-            projected(g,q).rca(f).stats.NR_JKParams = squeeze(temp_struct.NakaRushton.JackKnife.Params);
-            projected(g,q).rca(f).stats.hModel = temp_struct.NakaRushton.hModel;
-            projected(g,q).rca(f).stats.tSqrdP = squeeze(temp_struct.tSqrdP);
-            projected(g,q).rca(f).stats.tSqrdSig = squeeze(temp_struct.tSqrdSig);
-            projected(g,q).rca(f).stats.tSqrdVal = squeeze(temp_struct.tSqrdVal);
-            
-            % make classication data
-            temp_struct = aggregateData(projected(g,q).rca(f),keepConditions,errorType,true,false(4,6,5));
-            temp_clfdata = squeeze(temp_struct.subjectAmp_projected);
-            temp_clfdata = temp_clfdata(1:10,:,:,:); % don't include averages
-            temp_targets = ones(size(temp_clfdata,3),1)*g;
-            if g == 1
-                clf_data{q,f} = temp_clfdata;
-                clf_targets{q,f} = temp_targets;
-            else
-                clf_data{q,f} = cat(3,clf_data{q,f},temp_clfdata);
-                clf_targets{q,f} = cat(1,clf_targets{q,f},temp_targets);
-            end
-            clear temp_*
+            projected(g,q).rca(f).mean = struct([]);
+            projected(g,q).rca(f).subjects = struct([]); 
+            projected(g,q).rca(f).stats = struct([]); 
+            projected(g,q).rca(f) = aggregateData(projected(g,q).rca(f),keepConditions,errorType,trial_error,doNR);       
         end       
     end
     clear signal* noise* sub_*;
@@ -225,14 +204,15 @@ for g = 1:length(subject_group)
     end
 end
 % plotting variables
-sub_groups = {'typ','asd','adhd'};
+sub_groups = {'TD','ASD','ADHD'};
 % colors
 c_brewer = load('colorBrewer_new.mat');
 group_colors = [c_brewer.rgb20(5,:); c_brewer.rgb20(7,:); c_brewer.rgb20(1,:)];
 f_size = 12;
 l_width = 1;
 gcaOpts = {'tickdir','out','ticklength',[0.0400,0.0400],'box','off','fontsize',f_size,'fontname','Helvetica','linewidth',l_width,'clipping','off'};
-%% do comparisons
+
+%% BOXPLOT COMPARISON
 use_projected = true;
 t2_grp = [1,3]; t2_rc = 1; t2_frq = 1; t2_rctp = 1; t2_cnd = 1;
 for b = 1:11
@@ -246,9 +226,9 @@ box_labels = cellfun(@(x) sprintf('%.1f',str2num(x)), vis_labels, 'uni', false);
 box_labels = [repmat(box_labels,3,1)', {'ave'},  {'ave'},  {'ave'}];
 
 if use_projected
-    group1 = squeeze(projected(1,t2_rctp).rca(t2_frq).stats.SubjectAmpProjected(:,t2_rc,:,t2_cnd))';
-    group2 = squeeze(projected(2,t2_rctp).rca(t2_frq).stats.SubjectAmpProjected(:,t2_rc,:,t2_cnd))';
-    group3 = squeeze(projected(3,t2_rctp).rca(t2_frq).stats.SubjectAmpProjected(:,t2_rc,:,t2_cnd))';
+    group1 = squeeze(projected(1,t2_rctp).rca(t2_frq).subjects.proj_amp_signal(:,1,t2_rc,:,t2_cnd))';
+    group2 = squeeze(projected(2,t2_rctp).rca(t2_frq).subjects.proj_amp_signal(:,1,t2_rc,:,t2_cnd))';
+    group3 = squeeze(projected(3,t2_rctp).rca(t2_frq).subjects.proj_amp_signal(:,1,t2_rc,:,t2_cnd))';
     box_ylims = [-15,30];
 else
     group1 = squeeze(sqrt(xy_data{1,t2_rctp,t2_frq,t2_rc}(:,1,:,t2_cnd).^2+xy_data{1,t2_rctp,t2_frq,t2_rc}(:,2,:,t2_cnd).^2));
@@ -283,11 +263,18 @@ text(max(get(gca,'xlim'))*.95,max(get(gca,'ylim')),sub_groups{1}, 'color', group
 text(max(get(gca,'xlim'))*.95,max(get(gca,'ylim'))*.95,sub_groups{2}, 'color', group_colors(2,:), 'fontsize',f_size*2,'fontname','Helvetica')
 text(max(get(gca,'xlim'))*.95,max(get(gca,'ylim'))*.9,sub_groups{3}, 'color', group_colors(3,:), 'fontsize',f_size*2,'fontname','Helvetica')
 
+%% ASSESS RELIABILITY and VARIANCE EXPLAINED
+% we focused on the first rc, note that the first two and the last two 
+% values are the same (same rc, different harmonics)
+for z = 1:4  
+    [ rcaRelExpl(z), rcaVarExpl(z) ,pcaVarExpl(z) ] = rcaExplained(rca_all(z),1);
+end
+
 %% MAKE FIGURES
 close all;
 
 text_params = {'fontsize',f_size,'fontname','Helvetica','FontWeight','normal'};
-
+fig_labels = {'A','C','E','G','B','D','F','H'};
 for f = 1:4
     for q = 1:2
         fig_num = (f > 2)*2 + q;
@@ -321,14 +308,13 @@ for f = 1:4
             if mod(c,2)
                 % x-values
                 x_vals = cell2mat(cellfun(@(x) reallog(str2num(x)), vis_labels, 'uni',false));
-                xtick_labels = [0.5,1,2,5,10,20,40,80];
-                xticks = reallog(xtick_labels);
+                xtick_labels = arrayfun(@(x) sprintf('%0.0f',x), [1,2,5,10,20,40,80], 'uni', false);
+                xticks = reallog([1,2,5,10,20,40,80]);
                 bin_labels = vis_labels;
                 x_str = 'contrast (%)';
             else
-                x_vals = cell2mat(cellfun(@(x) reallog(str2num(x)), aud_labels, 'uni',false));
-                x_vals = interp1([min(x_vals),max(x_vals)],[50,70],x_vals);
-                xtick_labels = arrayfun(@(x) num2str(x,'%0.0f'), 50:5:70, 'uni',false);
+                x_vals = aud_x;
+                xtick_labels = arrayfun(@(x) num2str(x,'%0.0f'), min(aud_x):10:max(aud_x), 'uni',false);
                 xticks = cellfun(@(x) str2num(x), xtick_labels);
                 bin_labels = aud_labels;
                 x_str = 'sound pressure (\it{dB})';
@@ -358,10 +344,10 @@ for f = 1:4
                 hold on
                 marker_style = {'-o','LineWidth',l_width,'Color',group_colors(g,:),'markerfacecolor',[1 1 1],'MarkerSize',5};
                 % compute error bars
-                std_vals = nanstd(projected(g,q).rca(f).stats.SubjectAmpProjected(:,rc_num,:,c),0,3);
-                err_vals = std_vals./sqrt(sum(~isnan(projected(g,q).rca(f).stats.SubjectAmpProjected(:,rc_num,:,c)),3));
+                std_vals = nanstd(projected(g,q).rca(f).subjects.proj_amp_signal(:,1,rc_num,:,c),0,4);
+                err_vals = std_vals./sqrt(sum(~isnan(projected(g,q).rca(f).subjects.proj_amp_signal(:,1,rc_num,:,c)),4))';
                 ci_vals = std_vals*1.96;
-                [sig_vals, p_vals] = ttest(squeeze(projected(g,q).rca(f).stats.SubjectAmpProjected(:,rc_num,:,c)),0,'dim',2,'tail','right');
+                sig_vals = squeeze(projected(g,q).rca(f).stats.t_sig(:,1,rc_num,c));
                 
                 for z = 1:length(sig_vals)
                     if sig_vals(z)
@@ -381,7 +367,7 @@ for f = 1:4
                 
                 % make line graphs
                 if plot_medians
-                    med_vals = median(projected(g,q).rca(f).stats.SubjectAmpProjected(:,rc_num,:,c),3);
+                    med_vals = median(projected(g,q).rca(f).subjects.proj_amp_signal(:,rc_num,:,c),3);
                     h_val(g,1) = plot(x_vals,med_vals(1:10),marker_style{:});
                     if plot_binmean
                         h_val(g,2) = plot(extra_bins(g),med_vals(11),marker_style{:});
@@ -394,15 +380,15 @@ for f = 1:4
                             'color',group_colors(g,:),'type','bar','cap',false,'barwidth',l_width);
                     end
                 else
-                    h_val(g,1) = plot(x_vals,projected(g,q).rca(f).stats.Amp(1:10,rc_num,c),marker_style{:});
+                    h_val(g,1) = plot(x_vals,projected(g,q).rca(f).mean.amp_signal(1:10,1,rc_num,c),marker_style{:});
                     if plot_binmean
-                        h_val(g,2) = plot(extra_bins(g),projected(g,q).rca(f).stats.Amp(11,rc_num,c),marker_style{:});
+                        h_val(g,2) = plot(extra_bins(g),projected(g,q).rca(f).mean.amp_signal(11,1,rc_num,c),marker_style{:});
                         h_e = ErrorBars(...
-                            [x_vals;extra_bins(g)],projected(g,q).rca(f).stats.Amp(:,rc_num,c),[err_vals,err_vals], ...
+                            [x_vals;extra_bins(g)],squeeze(projected(g,q).rca(f).mean.amp_signal(:,1,rc_num,c)),[err_vals,err_vals], ...
                             'color',group_colors(g,:),'type','bar','cap',false,'barwidth',l_width);
                     else
                         h_e = ErrorBars(...
-                            x_vals,projected(g,q).rca(f).stats.Amp(1:10,rc_num,c),[err_vals(1:10),err_vals(1:10)], ...
+                            x_vals,squeeze(projected(g,q).rca(f).mean.amp_signal(1:10,1,rc_num,c)),[err_vals(1:10)',err_vals(1:10)'], ...
                             'color',group_colors(g,:),'type','bar','cap',false,'barwidth',l_width);
                     end   
                 end
@@ -412,8 +398,9 @@ for f = 1:4
                 
                 % get anova data
                 temp_data = cat(1,temp_data, ...
-                    permute(projected(g,q).rca(f).stats.SubjectAmpProjected(:,rc_num,:,c),[3,1,2]) );
-                temp_idx = cat(1, temp_idx, ones(size(projected(g,q).rca(f).stats.SubjectAmpProjected(:,rc_num,:,c),3),1)*g );
+                    squeeze(projected(g,q).rca(f).subjects.proj_amp_signal(:,1,rc_num,:,c))' );
+                num_subs = size(squeeze(projected(g,q).rca(f).subjects.proj_amp_signal(:,1,rc_num,:,c))',1);
+                temp_idx = cat(1, temp_idx, ones(num_subs,1)*g );
             end
             hold on
             ref_y = plot([x_min, x_max], ones(2,1)*y_min, 'k-','linewidth',l_width);
@@ -423,7 +410,7 @@ for f = 1:4
             arrayfun(@(x) uistack(x,'bottom'), sig_patch);
             
             anova_data(:,:,c+(q-1)*4) = temp_data;
-            anova_groups(:,c+(q-1)*4) = temp_idx';
+            anova_groups(:,c+(q-1)*4) = temp_idx;
             hold on
             
             x_split = x_vals(end) + log_step*.5;
@@ -438,8 +425,8 @@ for f = 1:4
             % add mean bin noise twice to the end with extra bin
             % we are plotting the mean values over two x-axis points
             
-            noise_set = max(cell2mat(arrayfun(@(x) projected(x,q).rca(f).stats.NoiseAmp(:,rc_num,c),1:length(subject_group),'uni',false)),[],2);
-            %noise_set = mean(cell2mat(arrayfun(@(x) projected(x,q).rca(f).stats.NoiseAmp(:,rc_num,c),1:length(subject_group),'uni',false)),2);
+            noise_set = max(cell2mat(arrayfun(@(x) squeeze(projected(x,q).rca(f).mean.amp_noise(:,1,rc_num,c)),1:length(subject_group),'uni',false)),[],2);
+            %noise_set = mean(cell2mat(arrayfun(@(x) squeeze(projected(x,q).rca(f).mean.amp_noise(:,1,rc_num,c)),1:length(subject_group),'uni',false)),2);
             x_patch = [x_min,x_min,x_vals',x_split,x_split];
             y_patch = [0,noise_set(1),noise_set(1:end-1)',noise_set(end-1),0]; % start and end points just repeats of first and last
             %h_p(1) = fill(x_patch,y_patch,[.75 .75 .75],'edgecolor','none');
@@ -455,12 +442,13 @@ for f = 1:4
             % plot layouts
             ylim([y_min,y_max]);
             xlim([x_min,x_max]);
+            text(x_min+(x_max-x_min)*.05, y_max-(y_max-y_min)*.15, fig_labels{c+~mod(f,2)*4}, text_params{:}, 'fontsize', 18)
             set(gca, gcaOpts{:},'ytick',y_min:y_unit:y_max,'xtick',xticks,'xticklabel',xtick_labels);
             if c == 1
                 ylabel([title_str,': amplitude (\muV)'], text_params{:})
             elseif c == 4
                 if ~mod(f,2)
-                    [h_l,~,l_plots] = legend(h_val(:,1),{'typ','asd','adhd'}, text_params{:},'location','northeast','box','off');
+                    [h_l,~,l_plots] = legend(h_val(:,1), sub_groups, text_params{:},'location','northeast','box','off');
                     for idx = 1:length(h_l.String)
                         h_l.String{idx} = ['\color[rgb]{' num2str(l_plots(idx).Color) '} ' h_l.String{idx}];
                     end
@@ -505,16 +493,6 @@ for f = 1:4
             else
             end
             
-            
-            %model_out{c+(q-1)*4,f} = fitlme(tbl,'data ~ 1 + group_lbl*bin + (1|subject)','DummyVarCoding','reference');
-            %anova_out{c+(q-1)*4,f} = anova(model_out{c+(q-1)*4,f},'DFMethod','satterthwaite');
-            %if q == 1
-            %    anova_path = sprintf('%s/analysis/anova_vis_rc%d_%s_c%d.mat',top_path,rc_num,freq_labels{f},c);
-            %else
-            %    anova_path = sprintf('%s/analysis/anova_aud_rc%d_%s_c%d.mat',top_path,rc_num,freq_labels{f},c);
-            %end
-            %save(anova_path,'data','subject','group','bin');
-            
             % DO RANKSUM
             if any(isnan(anova_data))
                 error('nans in anova_data');
@@ -546,8 +524,6 @@ for f = 1:4
             
             str_array = [str_array; 'disp (arcmins)',bin_labels','-'];
             str_array = [str_array; str_median1; str_median2; str_median3]; 
-            
-            
             
             test_sets = [1,2; 1,3; 2,3];
             for t = 1:length(test_sets)
@@ -593,9 +569,9 @@ for f = 1:4
 end
 for f = 1:4
     if f == 1
-        data_figpath = sprintf('%s/analysis/data_vis',top_path);
+        data_figpath = sprintf('%s/data_vis',fig_path);
     elseif f == 4
-        data_figpath = sprintf('%s/analysis/data_aud',top_path);
+        data_figpath = sprintf('%s/data_aud',fig_path);
     else
         continue
     end
@@ -606,19 +582,21 @@ for f = 1:4
     fig_pos(4) = 12;
     fig_pos(3) = 30;
     set(figure(f),'pos',fig_pos);
-    export_fig(sprintf('%s.png', data_figpath),'-png','-opengl','-m5','-transparent',gcf);
+    export_fig(sprintf('%s.tif', data_figpath),'-tif','-painters','-r600', '-transparent',gcf);
 end
 
 %% COMPARISON PLOT
+% this section creates plots for comparing 
+% unimodal and crossmodal conditions
 close all;
 for q = 1:2
     figure;
     if q == 1
-        comp_figpath = sprintf('%s/analysis/vis_comp',top_path);
+        comp_figpath = sprintf('%s/vis_comp',fig_path);
         comp_conds = [1,3];
         comp_freqs = [1,2];
     else
-        comp_figpath = sprintf('%s/analysis/aud_comp',top_path);
+        comp_figpath = sprintf('%s/aud_comp',fig_path);
         comp_conds = [2,4];
         comp_freqs = [3,4];
     end
@@ -627,14 +605,13 @@ for q = 1:2
             if q == 1
                 % x-values
                 x_vals = cell2mat(cellfun(@(x) reallog(str2num(x)), vis_labels, 'uni',false));
-                xtick_labels = [0.5,1,2,5,10,20,40,80];
-                xticks = reallog(xtick_labels);
+                xtick_labels = arrayfun(@(x) sprintf('%0.0f',x), [1,2,5,10,20,40,80], 'uni', false);
+                xticks = reallog([1,2,5,10,20,40,80]);
                 bin_labels = vis_labels;
                 x_str = 'contrast (%)';
             else
-                x_vals = cell2mat(cellfun(@(x) reallog(str2num(x)), aud_labels, 'uni',false));
-                x_vals = interp1([min(x_vals),max(x_vals)],[50,70],x_vals);
-                xtick_labels = arrayfun(@(x) num2str(x,'%0.0f'), 50:5:70, 'uni',false);
+                x_vals = aud_x;
+                xtick_labels = arrayfun(@(x) num2str(x,'%0.0f'), min(aud_x):10:max(aud_x), 'uni',false);
                 xticks = cellfun(@(x) str2num(x), xtick_labels);
                 bin_labels = aud_labels;
                 x_str = 'sound pressure (\it{dB})';
@@ -685,11 +662,11 @@ for q = 1:2
                 else
                     marker_style = {'-d','LineWidth',l_width,'Color',group_colors(g,:),'markerfacecolor', m_color,'MarkerSize',6};
                 end
-                std_vals = nanstd(projected(g,q).rca(f).stats.SubjectAmpProjected(:,rc_num,:,comp_conds(c)),0,3);
-                err_vals = std_vals./sqrt(sum(~isnan(projected(g,q).rca(comp_freqs(f)).stats.SubjectAmpProjected(:,rc_num,:,comp_conds(c))),3));
+                std_vals = nanstd(projected(g,q).rca(f).subjects.proj_amp_signal(:,1,rc_num,:,comp_conds(c)),0,4);
+                err_vals = std_vals./sqrt(sum(~isnan(projected(g,q).rca(comp_freqs(f)).subjects.proj_amp_signal(:,1,rc_num,:,comp_conds(c))),4));
                 ci_vals = std_vals*1.96;
                 if plot_medians
-                    med_vals = median(projected(g,q).rca(f).stats.SubjectAmpProjected(:,rc_num,:,comp_conds(c)),3);
+                    med_vals = median(projected(g,q).rca(f).subjects.proj_amp_signal(:, 1, rc_num,:,comp_conds(c)),4);
                     h_val(g,1) = plot(x_vals,med_vals(1:10),marker_style{:});
                     hold on
                     if plot_binmean
@@ -703,16 +680,16 @@ for q = 1:2
                             'color',group_colors(g,:),'type','bar','cap',false,'barwidth',l_width);
                     end
                 else
-                    h_val(g,1) = plot(x_vals,projected(g,q).rca(comp_freqs(f)).stats.Amp(1:10,rc_num,comp_conds(c)),marker_style{:});
+                    h_val(g,1) = plot(x_vals,projected(g,q).rca(comp_freqs(f)).mean.amp_signal(1:10,1,rc_num,comp_conds(c)),marker_style{:});
                     hold on
                     if plot_binmean
-                        h_val(g,2) = plot(extra_bins(g),projected(g,q).rca(comp_freqs(f)).stats.Amp(11,rc_num,comp_conds(c)),marker_style{:});
+                        h_val(g,2) = plot(extra_bins(g),projected(g,q).rca(comp_freqs(f)).mean.amp_signal(11,1,rc_num,comp_conds(c)),marker_style{:});
                         h_e = ErrorBars(...
-                            [x_vals;extra_bins(g)],projected(g,q).rca(comp_freqs(f)).stats.Amp(:,rc_num,comp_conds(c)),[err_vals,err_vals], ...
+                            [x_vals;extra_bins(g)],projected(g,q).rca(comp_freqs(f)).mean.amp_signal(:,1,rc_num,comp_conds(c)),[err_vals,err_vals], ...
                             'color',group_colors(g,:),'type','bar','cap',false,'barwidth',l_width);
                     else
                         h_e = ErrorBars(...
-                            x_vals,projected(g,q).rca(comp_freqs(f)).stats.Amp(1:10,rc_num,comp_conds(c)),[err_vals(1:10),err_vals(1:10)], ...
+                            x_vals,projected(g,q).rca(comp_freqs(f)).mean.amp_signal(1:10,1,rc_num,comp_conds(c)),[err_vals(1:10),err_vals(1:10)], ...
                             'color',group_colors(g,:),'type','bar','cap',false,'barwidth',l_width);
                     end   
                 end
@@ -750,5 +727,5 @@ for q = 1:2
     fig_pos(4) = 12;
     fig_pos(3) = 24;
     set(gcf,'pos',fig_pos);
-    export_fig(sprintf('%s.png', comp_figpath),'-png','-opengl','-m5','-transparent',gcf);
+    export_fig(sprintf('%s.pdf', comp_figpath),'-pdf','-transparent',gcf);
 end
