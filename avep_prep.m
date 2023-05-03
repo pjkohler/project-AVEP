@@ -29,8 +29,8 @@ doNR = false(4,6,5);  % 10 freqs, 5 RCs, 5 conditions
 %doNR(:,:,:) = true; % do fitting for all RC, first harmonic, all conditions
 
 %% GET SUBJECT FOLDERS
-top_path = '/Volumes/Denali_DATA1/kohler/EEG_EXP/DATA/AVEP';
-fig_path = '/Users/kohler/Dropbox/WRITING/Articles/2018_AVEP/figures';
+top_path = '/Volumes/science/AVEP';
+fig_path = '/Users/kohler/Google Drive/WRITING/Articles/2018_AVEP/figures';
 subject_group{1} = sprintf('%s/AVEP_ASD',top_path); % ASD young subjects
 subject_group{2} = sprintf('%s/AVEP_TYP',top_path); % Typical young subjects
 subject_group{3} = sprintf('%s/AVEP_ADHD',top_path);% ADHD young participants
@@ -104,16 +104,29 @@ for g = 1:length(subject_group)
     end
     % CHECK FREQUENCY AND BIN INDICES FOR CONSISTENCY ACROSS SUBS
     n_subs(g) = size(signal_data,2);
-    for s=1:n_subs(g)
-        for c = 1:length(all_conds)
+    n_bins = length(bins_to_use);
+    n_sensors = 128;
+    n_conds = length(all_conds);
+    for c = 1:n_conds
+        temp_sum = zeros(n_sensors, n_bins);
+        for s=1:n_subs(g)
             if sum(abs(sub_freq_idx{s}{c}-sub_freq_idx{1}{c}))~=0 && sum(abs(sub_bin_idx{s}{c}-sub_bin_idx{1}{c}))~=0
                 error('Frequency and bin indices vary across subjects: check consistency of DFT/RLS exports\n.');
             end
+            n_trials = size(signal_data{c,s},3);
+            % average number of missing trials, across electrodes and bins
+            temp_sum = temp_sum + squeeze(sum(any(reshape(~isnan(signal_data{c,s}), n_bins, [], n_sensors, n_trials), 2), 4))' ./ n_trials;
         end
+        full_sum(g,c) = {temp_sum./n_subs(g)};
     end
+    if g == length(subject_group)
+        save(sprintf('%s/avep_sums.mat',fig_path), 'full_sum');
+    else
+    end
+    
     freq_labels = sub_freq_labels{1}{1};
-    vis_labels = cellfun(@(x) num2str(str2num(x),'%0.2f'), sub_bin_labels{1}{1},'uni',false);
-    aud_labels = cellfun(@(x) num2str(str2num(x),'%0.4f'), sub_bin_labels{1}{2},'uni',false);
+    vis_labels = cellfun(@(x) num2str(str2num(x),'%0.2f'), sub_bin_labels{1}{1}(unique(sub_bin_idx{1}{1})),'uni',false);
+    aud_labels = cellfun(@(x) num2str(str2num(x),'%0.4f'), sub_bin_labels{1}{2}(unique(sub_bin_idx{1}{2})),'uni',false);
     
     % convert auditory to dB values
     aud_x = cell2mat(cellfun(@(x) reallog(str2num(x)), aud_labels, 'uni',false));
@@ -269,6 +282,115 @@ text(max(get(gca,'xlim'))*.95,max(get(gca,'ylim'))*.9,sub_groups{3}, 'color', gr
 for z = 1:4  
     [ rcaRelExpl(z), rcaVarExpl(z) ,pcaVarExpl(z) ] = rcaExplained(rca_all(z),1);
 end
+
+%% CORRELATE WITH IQ SCORES
+T = readtable('/Users/kohler/Google Drive/WRITING/Articles/2018_AVEP/avep_sweep_clinical data.xlsx');
+close all;
+iq_q = 1; 
+iq_rc = 1;
+
+for iq_f = 1:2
+    for iq_c = 1:4
+        switch iq_c
+            case 1
+                y_min = -5;
+                y_unit = 5;
+                y_max = 15;
+            case 2
+                y_min = -2;
+                y_unit = 1;
+                y_max = 4;
+            case 3
+                y_min = -5;
+                y_unit = 5;
+                y_max = 15;
+            otherwise
+                y_min = -10;
+                y_unit = 10;
+                y_max = 20;
+        end
+        IQ_list = [];
+        for g = 1:3
+            if g == 1
+                cur_list = ready_names(typ_idx);
+            elseif g == 2
+                cur_list = ready_names(asd_idx);
+            elseif g == 3
+                cur_list = ready_names(adhd_idx);
+            else
+            end
+            sub_count = 0;
+            cur_data = squeeze(nanmean(projected(g,iq_q).rca(iq_f).subjects.amp_signal(1:10, 1, iq_rc, :, iq_c),1));
+            for n = 1:length(cur_list)
+                cur_name = ['SP',split_string(split_string(upper(cur_list{n}),'SP',2),'_',1)];
+                cur_idx = find(ismember(T.REDCAPID,[cur_name,'--1']));
+                sub_count = sub_count + 1;
+                IQ_list = cat(1,IQ_list,[g, cur_data(sub_count), table2array(T(cur_idx,4))]);
+                if isempty(cur_idx)
+                    error(cur_name)
+                else
+                end
+            end
+        end
+        nan_idx = ~any(isnan(IQ_list),2); % missing IQ values
+
+        % full correlation
+        [R_full, p_full] = corr(IQ_list(nan_idx,2), IQ_list(nan_idx,3) );
+
+        % TYP correlation
+        typ_nan = all([nan_idx, IQ_list(:,1)==1],2); 
+        [R_typ, p_typ] = corr(IQ_list(typ_nan,2), IQ_list(typ_nan,3) );
+
+        % ASD correlation
+        asd_nan = all([nan_idx, IQ_list(:,1)==2],2); 
+        [R_asd, p_asd] = corr(IQ_list(asd_nan,2), IQ_list(asd_nan,3) );
+
+        % ASD correlation
+        adhd_nan = all([nan_idx, IQ_list(:,1)==3],2); 
+        [R_adhd, p_adhd] = corr(IQ_list(adhd_nan,2), IQ_list(adhd_nan,3) );
+        
+        subplot(2,4,iq_c+(iq_f-1)*4)
+        hold on
+        plot(IQ_list(typ_nan,3), IQ_list(typ_nan,2), 'o', 'color', group_colors(1,:), 'LineWidth',1) 
+        plot(IQ_list(asd_nan,3), IQ_list(asd_nan,2), 'o', 'color', group_colors(2,:), 'LineWidth',1)
+        plot(IQ_list(adhd_nan,3), IQ_list(adhd_nan,2), 'o', 'color', group_colors(3,:), 'LineWidth',1)
+        %legend('typ','asd','adhd')
+        if (iq_f == 2)
+            xlabel('{\itIQ}', text_params{:});
+        else
+        end
+        xlim([20,140]); ylim([y_min, y_max]);
+        title_str = ['{\it',sprintf('%s}',freq_labels{iq_f})];
+        if (iq_c == 1)
+            ylabel([sprintf('%s: amplitude (', title_str),'\muV)'], text_params{:})
+        else
+        end
+        set(gca, gcaOpts{:}, 'ytick', y_min:y_unit:y_max, 'ticklength',[0.0200,0.0200]);
+        if iq_f == 1
+            if iq_q == 1
+                title(['{\it', sprintf('%s, \nvisual RC no. %d}', cond_names{iq_c}, iq_rc)], text_params{:});
+            else
+                title(['{\it', sprintf('%s, \nauditory RC no. %d}', cond_names{iq_c}, iq_rc)], text_params{:});
+            end
+        else
+        end
+        corr_pos = max(get(gca,'ylim')) - diff(get(gca,'ylim'))*.1;
+        text(25, corr_pos, ['{\itR}', sprintf(' = %.3f', R_full)], text_params{:}, 'fontsize', f_size);
+    end
+end
+drawnow
+set( gcf, 'units', 'centimeters');
+fig_pos = get(gcf,'pos');
+fig_pos(4) = 12;
+fig_pos(3) = 30;
+set(gcf,'pos',fig_pos);
+if iq_q == 1
+    export_fig('~/Desktop/AVEP_IQcorr_vis.pdf', '-r600', '-transparent');
+else
+    export_fig('~/Desktop/AVEP_IQcorr_aud.pdf', '-r600', '-transparent');
+end
+hold off
+
 
 %% MAKE FIGURES
 close all;
@@ -489,7 +611,7 @@ for f = 1:4
                 else
                     r_table = sprintf('%s/analysis/r_aud_rc%d_%s_%d.csv',top_path,rc_num,freq_labels{f},c);
                 end
-                writetable(tbl, r_table, 'Delimiter',',','QuoteStrings',true)
+                %writetable(tbl, r_table, 'Delimiter',',','QuoteStrings',true)
             else
             end
             
@@ -540,10 +662,10 @@ for f = 1:4
                 str_p(sig_idx) = {'<0.0001'};
                 str_p = [sprintf('%s vs %s p',label1,label2),str_p];
                 % compute AUROC
-                mes_struct = arrayfun(@(x) mes(dset{test_sets(t,1)}(:,x),dset{test_sets(t,2)}(:,x),'auroc'),1:(length(bin_labels)+1));
-                str_auroc = arrayfun(@(x) num2str(mes_struct(x).auroc,'%0.4f'),1:(length(bin_labels)+1),'uni',false);
-                str_auroc = [sprintf('%s vs %s AUROC',label1,label2),str_auroc];
-                str_array = [str_array; str_w; str_p; str_auroc];
+                %mes_struct = arrayfun(@(x) mes(dset{test_sets(t,1)}(:,x),dset{test_sets(t,2)}(:,x),'auroc'),1:(length(bin_labels)+1));
+                %str_auroc = arrayfun(@(x) num2str(mes_struct(x).auroc,'%0.4f'),1:(length(bin_labels)+1),'uni',false);
+                %str_auroc = [sprintf('%s vs %s AUROC',label1,label2),str_auroc];
+                %str_array = [str_array; str_w; str_p; str_auroc];
             end
         end
         egi_h(fig_num) = subplot(2,5,[5,10]);
@@ -564,7 +686,7 @@ for f = 1:4
         % write table
         ready_table = array2table(str_array);
         clear str_*
-        writetable(ready_table,table_path,'WriteRowNames',false,'WriteVariableNames',false);
+        %writetable(ready_table,table_path,'WriteRowNames',false,'WriteVariableNames',false);
     end
 end
 for f = 1:4
@@ -582,7 +704,7 @@ for f = 1:4
     fig_pos(4) = 12;
     fig_pos(3) = 30;
     set(figure(f),'pos',fig_pos);
-    export_fig(sprintf('%s.tif', data_figpath),'-tif','-painters','-r600', '-transparent',gcf);
+    %export_fig(sprintf('%s.tif', data_figpath),'-tif','-painters','-r600', '-transparent',gcf);
 end
 
 %% COMPARISON PLOT
